@@ -1,0 +1,30 @@
+[project]
+name = "node-palettes"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+authors = [
+    { name = "Brady Johnston", email = "brady.johnston@me.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "cmcrameri>=1.10",
+    "cmocean>=4.0.3",
+    "matplotlib>=3.11.2",
+    "met-brewer>=1.0.2",
+    "nodebpy>=520.41.0",
+    "scipy>=1.18.1",
+]
+
+[project.scripts]
+node-palettes = "node_palettes:main"
+
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
