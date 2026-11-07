@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Export CarbonPlan's colormaps in both modes as .rgb tables",
+  "scripts": {
+    "export": "node export.mjs"
+  },
+  "dependencies": {
+    "@carbonplan/colormaps": "4.0.0",
+    "chroma-js": "2.2.0"
+  }
+}

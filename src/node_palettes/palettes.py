@@ -12,6 +12,7 @@ import cmocean
 import matplotlib
 import met_brewer
 import numpy as np
+from matplotlib import _cm
 from matplotlib.colors import Colormap, ListedColormap, to_rgb
 
 RGB_DIR = Path(__file__).parent / "data" / "rgb"
@@ -21,6 +22,11 @@ SAMPLES = 256
 BLENDER_COLORMAPS = "Blender-Colormaps"
 
 # matplotlib's own grouping, from its colormap reference gallery
+# sine waves in matplotlib/_cm.py, sin(x * 31.5 pi) and sin(x * 20.9 pi): one ramp
+# holds a single repeat, which the node group wraps Value into
+MATPLOTLIB_CYCLES = {"flag": 31.5 / 2, "prism": 20.9 / 2}
+PERIOD_SAMPLES = 1024  # finely enough to catch where the waves are clipped
+
 MATPLOTLIB_GROUPS = {
     "Uniform": ["viridis", "plasma", "inferno", "magma", "cividis"],
     "Sequential": [
@@ -72,21 +78,38 @@ class Palette:
     source: str
     srgb: np.ndarray
     discrete: bool = False  # hard steps between colours, rather than a gradient
+    # a palette that repeats: how many times, and sRGB samples of one repeat
+    cycles: float = 1.0
+    period: np.ndarray | None = None
 
     @property
     def digest(self) -> str:
         """Identifies the colours, so a fit is redone only when they change."""
-        rounded = np.round(self.srgb, 6) + 0.0  # + 0.0 folds -0.0 into 0.0
-        return hashlib.sha256(rounded.astype("<f8").tobytes()).hexdigest()[:16]
+        arrays = [self.srgb] if self.period is None else [self.srgb, self.period]
+        digest = hashlib.sha256()
+        for a in arrays:
+            rounded = np.round(a, 6) + 0.0  # + 0.0 folds -0.0 into 0.0
+            digest.update(rounded.astype("<f8").tobytes())
+        if self.period is not None:
+            digest.update(repr(self.cycles).encode())
+        return digest.hexdigest()[:16]
 
 
 def _sampled(cmap: Colormap) -> np.ndarray:
     return cmap(np.linspace(0.0, 1.0, SAMPLES))[:, :3]
 
 
+def _period(name: str, cycles: float) -> np.ndarray:
+    """One repeat of a matplotlib palette defined by functions of x, as sRGB."""
+    functions = _cm.datad[name]
+    x = np.linspace(0.0, 1.0, PERIOD_SAMPLES) / cycles
+    return np.clip(np.stack([functions[c](x) for c in ("red", "green", "blue")], 1), 0, 1)
+
+
 def _matplotlib_palette(name: str, group: str) -> Palette:
     cmap = matplotlib.colormaps[name]
     discrete = isinstance(cmap, ListedColormap) and cmap.N <= MAX_STOPS
+    cycles = MATPLOTLIB_CYCLES.get(name, 1.0)
     return Palette(
         name=name,
         collection="matplotlib",
@@ -94,6 +117,8 @@ def _matplotlib_palette(name: str, group: str) -> Palette:
         source=f"matplotlib {matplotlib.__version__}",
         srgb=np.array([to_rgb(c) for c in cmap.colors]) if discrete else _sampled(cmap),
         discrete=discrete,
+        cycles=cycles,
+        period=_period(name, cycles) if name in MATPLOTLIB_CYCLES else None,
     )
 
 
@@ -154,7 +179,8 @@ def load_metbrewer() -> Iterator[Palette]:
     source = f"met-brewer {version('met-brewer')}"
     for name, palette in met_brewer.MET_PALETTES.items():
         srgb = np.array([to_rgb(c) for c in palette["colors"]])
-        yield Palette(name, "metbrewer", "", source, srgb)
+        # hand-picked colour sets: discrete by default in MetBrewer itself
+        yield Palette(name, "metbrewer", "", source, srgb, discrete=True)
 
 
 def read_rgb_table(path: Path) -> np.ndarray:
@@ -187,10 +213,14 @@ def _load_tables(
         )
 
 
+def _carbonplan_mode(name: str) -> str:
+    """Light or Dark; a map that is the same in both has no suffix."""
+    mode = name.rpartition("_")[2]
+    return mode.capitalize() if mode in ("light", "dark") else ""
+
+
 def load_carbonplan() -> Iterator[Palette]:
-    return _load_tables(
-        "carbonplan", lambda name: name.rpartition("_")[2].capitalize()
-    )
+    return _load_tables("carbonplan", _carbonplan_mode)
 
 
 def load_nasa() -> Iterator[Palette]:
@@ -198,7 +228,7 @@ def load_nasa() -> Iterator[Palette]:
 
 
 def load_ltc() -> Iterator[Palette]:
-    return _load_tables("ltc")
+    return _load_tables("ltc", discrete=True)
 
 
 def load_tableau() -> Iterator[Palette]:

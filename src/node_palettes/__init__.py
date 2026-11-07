@@ -3,6 +3,7 @@ import time
 
 from .fitting import fit_palettes
 from .palettes import LOADERS, load_palettes
+from .verify import verify as verify_library
 
 
 def fit(collections: list[str] | None, workers: int | None) -> None:
@@ -37,5 +38,17 @@ def main() -> None:
         "collections", nargs="*", help=f"default: all of {', '.join(LOADERS)}"
     )
     fit_parser.add_argument("--workers", type=int, help="default: one per core")
+    verify_parser = commands.add_parser(
+        "verify", help="check the built library in every editor, through Blender"
+    )
+    verify_parser.add_argument(
+        "collections", nargs="*", help=f"default: all of {', '.join(LOADERS)}"
+    )
+    verify_parser.add_argument(
+        "--blender", help="Blender 5.3 executable, default: $BLENDER or blender"
+    )
     args = parser.parse_args()
-    fit(args.collections, args.workers)
+    if args.command == "fit":
+        fit(args.collections, args.workers)
+    elif not verify_library(args.collections, args.blender):
+        raise SystemExit(1)

@@ -102,6 +102,27 @@ def test_cache_skips_unchanged_and_refits_changed(tmp_path):
     assert read_ramps("test", tmp_path)["a"].digest == changed.digest
 
 
+def test_cache_refits_when_a_palette_becomes_discrete(tmp_path):
+    colours = np.random.default_rng(1).random((7, 3))
+    fit_palettes([palette(colours, "a")], 1, tmp_path)
+    (ramp,) = fit_palettes([palette(colours, "a", discrete=True)], 1, tmp_path)["test"]
+    assert [s.interpolation for s in ramp.segments] == ["CONSTANT"]
+
+
+def test_repeating_palette_is_one_ramp_wrapped():
+    def wave(t):
+        return 0.5 + 0.4 * np.sin(2 * np.pi * t[:, None] + np.array([0, 2, 4]))
+
+    cycles = 6.5
+    p = Palette(
+        "w", "test", "", "test", wave(np.linspace(0, 1, 256) * cycles),
+        cycles=cycles, period=wave(np.linspace(0, 1, 512)),
+    )
+    ramp = fit_split(p, 1)
+    assert len(ramp.segments) == 1 and ramp.cycles == cycles
+    assert ramp.error < 1.0  # measured on the whole palette, through the wrap
+
+
 def test_worker_count_does_not_change_results(tmp_path):
     items = [palette(gradient(), "a"), palette(gradient()[::-1], "b")]
     one = fit_palettes(items, 1, tmp_path / "one")["test"]
@@ -123,7 +144,7 @@ def test_stored_ramp_matches_source(source, ramp):
     assert ramp is not None, "run `node-palettes fit`"
     assert ramp.digest == source.digest and ramp.fit_version == fitting.FIT_VERSION
     assert ramp.segments[0].start == 0.0 and ramp.segments[-1].end == 1.0
-    assert ramp.error <= fitting.LOSSY
+    assert ramp.error <= (fitting.LOSSY if source.period is None else fitting.PERIODIC_LOSSY)
     if len(ramp.segments) > 1:
         assert ramp.error <= fitting.TOLERANCE
 

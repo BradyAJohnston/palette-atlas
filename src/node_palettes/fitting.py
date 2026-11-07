@@ -8,6 +8,7 @@ their colours are copied exactly.
 
 A palette that one ramp can't hold is split into even segments, one ramp each.
 A segment of 32 samples or fewer is copied exactly, so splitting always succeeds.
+A palette that repeats is instead fitted as one ramp holding a single repeat.
 
 Ported from MolecularNodes' docs/dev/colormap_node.py.
 """
@@ -29,6 +30,8 @@ from .palettes import MAX_STOPS, Palette
 RAMPS_DIR = Path(__file__).parent / "data" / "ramps"
 TOLERANCE = 1.0  # fewest stops that keep every sample within this, in 1/255 sRGB
 LOSSY = 2.0  # a single ramp worse than this is split into segments
+# one repeat of flag needs about 2.2 at 32 stops; kept to one ramp regardless
+PERIODIC_LOSSY = 2.5
 # stops closer than this collapse in Blender's 32-bit positions, wrecking the
 # colour at the end of a ramp; still well under the 1/255 spacing of the samples
 MIN_GAP = 1e-4
@@ -60,6 +63,7 @@ class Ramp:
     error: float
     segments: list[Segment]
     fit_version: int = FIT_VERSION
+    cycles: float = 1.0  # Value wraps into the segments this many times
 
 
 def to_linear(c):
@@ -194,6 +198,8 @@ def fewest_stops(srgb: np.ndarray, mode: str):
 
 def evaluate_ramp(ramp: Ramp, x: np.ndarray) -> np.ndarray:
     """sRGB colours of a whole palette at x, as its nodes would give them."""
+    if ramp.cycles != 1.0:
+        x = np.mod(x * ramp.cycles, 1.0)  # the group's Fraction node
     out = np.zeros((len(x), 3))
     for i, segment in enumerate(ramp.segments):
         chosen = x >= segment.start if i else np.ones(len(x), bool)
@@ -225,6 +231,7 @@ def _ramp(palette: Palette, segments: list[Segment]) -> Ramp:
     n = len(palette.srgb)
     x = (np.arange(n) + 0.5) / n if palette.discrete else np.linspace(0, 1, n)
     ramp = Ramp(palette.name, palette.group, palette.source, palette.digest, 0.0, segments)
+    ramp.cycles = palette.cycles
     ramp.error = round(float(np.abs(evaluate_ramp(ramp, x) - palette.srgb).max() * 255), 3)
     return ramp
 
@@ -247,7 +254,10 @@ def copy_stops(palette: Palette) -> Ramp:
 
 
 def fit_split(palette: Palette, parts: int) -> Ramp:
-    """Fit a palette as even segments, sharing the sample where they meet."""
+    """Fit a palette as even segments, sharing the sample where they meet, or
+    a repeating palette as one ramp holding a single repeat."""
+    if palette.period is not None:
+        return _ramp(palette, [_fit_segment(palette.period, 0.0, 1.0)])
     n = len(palette.srgb)
     bounds = np.linspace(0, n - 1, parts + 1).round().astype(int)
     return _ramp(
@@ -261,11 +271,17 @@ def fit_split(palette: Palette, parts: int) -> Ramp:
 
 def most_parts(palette: Palette) -> int:
     """Segments at which every segment is short enough to copy exactly."""
+    if palette.period is not None:
+        return 1
     return math.ceil((len(palette.srgb) - 1) / (MAX_STOPS - 1))
 
 
+def is_stepped(ramp: Ramp) -> bool:
+    return all(s.interpolation == "CONSTANT" for s in ramp.segments)
+
+
 def needs_fit(palette: Palette) -> bool:
-    return not palette.discrete and len(palette.srgb) > MAX_STOPS
+    return palette.period is not None or (not palette.discrete and len(palette.srgb) > MAX_STOPS)
 
 
 def read_ramps(collection: str, ramps_dir: Path = RAMPS_DIR) -> dict[str, Ramp]:
@@ -315,7 +331,12 @@ def fit_palettes(
     for palette in palettes:
         key = (palette.collection, palette.name)
         hit = cached[palette.collection].get(palette.name)
-        if hit and hit.digest == palette.digest and hit.fit_version == FIT_VERSION:
+        if (
+            hit
+            and hit.digest == palette.digest
+            and hit.fit_version == FIT_VERSION
+            and is_stepped(hit) == palette.discrete
+        ):
             # the group and source can change without the colours changing
             hit.group, hit.source = palette.group, palette.source
             done[key] = hit

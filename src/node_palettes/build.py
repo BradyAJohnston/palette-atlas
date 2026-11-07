@@ -12,6 +12,7 @@ the rest of the package with.
 """
 
 import json
+import math
 import sys
 import uuid
 from pathlib import Path
@@ -25,6 +26,8 @@ LIBRARY_DIR = Path(__file__).parents[2] / "library"
 LIBRARY_NAME = "Scientific Palettes"
 CONTACT = {"name": "Brady Johnston", "email": "brady.johnston@me.com"}
 PREVIEW_SIZE = 128
+MAX_STOPS = 32  # a Color Ramp's limit, as in palettes.py
+EDGE_NUDGE = 1e-6
 
 EDITORS = {
     "Geometry Nodes": ("geometry", TreeBuilder.geometry, geometry),
@@ -42,42 +45,121 @@ def catalog_id(path: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, path))
 
 
-def build_group(ramp: dict, make_tree, nodes) -> bpy.types.NodeTree:
-    """A node group mapping Value to Color through the palette's ramps.
+def is_discrete(ramp: dict) -> bool:
+    return all(s["interpolation"] == "CONSTANT" for s in ramp["segments"])
 
-    Each segment after the first takes over from the one before once Value
-    reaches its start, Mix Color standing in for the Switch shaders don't have.
+
+def smooth_segments(colors: list) -> list[dict]:
+    """Linear ramps through a discrete palette's colours, spread evenly from 0
+    to 1, neighbouring segments sharing their boundary colour."""
+    n = len(colors)
+    parts = math.ceil((n - 1) / (MAX_STOPS - 1))
+    bounds = np.linspace(0, n - 1, parts + 1).round().astype(int)
+    return [
+        {
+            "start": a / (n - 1),
+            "end": b / (n - 1),
+            "interpolation": "LINEAR",
+            "stops": [((k - a) / (b - a), *colors[k]) for k in range(a, b + 1)],
+        }
+        for a, b in zip(bounds, bounds[1:])
+    ]
+
+
+def lookup(t, segments: list[dict], nodes):
+    """(colour at t, [(segment, ColorRamp node)]) through one ramp per segment.
+
+    Each segment after the first takes over from the one before once t reaches
+    its start.
     """
+    result, ramps = None, []
+    for segment in segments:
+        start, end = segment["start"], segment["end"]
+        local = t if end - start == 1 else (t - start) / (end - start)
+        constant = segment["interpolation"] == "CONSTANT"
+        ramp_node = nodes.ColorRamp(
+            local,
+            items=[
+                # a value exactly on a band edge belongs to the band above, as
+                # in matplotlib, which float rounding would otherwise decide
+                (max(p - EDGE_NUDGE, 0.0) if constant else p, (r, g, b, 1.0))
+                for p, r, g, b in segment["stops"]
+            ],
+            color_interpolation=segment["interpolation"],
+        )
+        ramps.append((segment, ramp_node.node))
+        result = ramp_node if result is None else nodes.Mix.color(t < start, ramp_node, result)
+    return result, ramps
+
+
+def value_input(tree):
+    return tree.inputs.float(
+        "Value",
+        0.5,
+        description="Position along the palette, 0 to 1",
+        min_value=0.0,
+        max_value=1.0,
+        subtype="FACTOR",
+    )
+
+
+def reverse_input(tree):
+    return tree.inputs.boolean("Reverse", False, description="Run the palette from 1 to 0")
+
+
+def build_group(ramp: dict, make_tree, nodes):
+    """(node group, the ramps showing its default colours) for the palette.
+
+    A smooth palette maps Value to its fitted ramps. A discrete one has a Mode:
+    Stepped bands, a Smooth blend of its colours, or the colour at Index.
+    """
+    discrete = is_discrete(ramp)
     with make_tree(ramp["name"]) as tree:
-        value = tree.inputs.float(
-            "Value",
-            0.5,
-            description="Position along the palette, 0 to 1",
-            min_value=0.0,
-            max_value=1.0,
-            subtype="FACTOR",
-        )
-        reverse = tree.inputs.boolean(
-            "Reverse", False, description="Run the palette from 1 to 0"
-        )
+        value = value_input(tree)
+        if discrete:
+            index = tree.inputs.integer(
+                "Index", 0, description="Colour to use in Index mode, wrapping around"
+            )
+        reverse = reverse_input(tree)
+        if discrete:
+            mode = tree.inputs.menu(
+                "Mode", "Stepped", description="Stepped bands, a smooth blend, or by Index"
+            )
         color = tree.outputs.color("Color", description="Colour at Value")
 
-        position = nodes.Mix.float(reverse, value, 1.0 - value)
-        result = None
-        for segment in ramp["segments"]:
-            start, end = segment["start"], segment["end"]
-            local = position if end - start == 1 else (position - start) / (end - start)
-            ramp_node = nodes.ColorRamp(
-                local,
-                items=[(p, (r, g, b, 1.0)) for p, r, g, b in segment["stops"]],
-                color_interpolation=segment["interpolation"],
-            )
-            if result is None:
-                result = ramp_node
-            else:
-                result = nodes.Mix.color(position < start, ramp_node, result)
-        result >> color
-    return bpy.data.node_groups[ramp["name"]]
+        with nodes.Frame("Position"):
+            position = nodes.Mix.float(reverse, value, 1.0 - value)
+            if ramp.get("cycles", 1.0) != 1.0:
+                # a repeating palette holds one repeat, which Value wraps into
+                position = nodes.Math.fraction(position * ramp["cycles"])
+        if not discrete:
+            with nodes.Frame("Palette"):
+                result, ramps = lookup(position, ramp["segments"], nodes)
+            result >> color
+        else:
+            colors = [stop[1:] for s in ramp["segments"] for stop in s["stops"]]
+            n = len(colors)
+            with nodes.Frame("Mode"):
+                k = nodes.Math.floored_modulo(index, n)
+                k = nodes.Mix.float(reverse, k, (n - 1) - k)
+                # one Menu Switch, so the group gets a single Mode menu: it gives
+                # (where to read the stepped ramps, whether to use the smooth ones)
+                chosen = nodes.SeparateXYZ(
+                    nodes.MenuSwitch.vector(
+                        mode,
+                        {
+                            "Stepped": nodes.CombineXYZ(position, 0.0, 0.0),
+                            "Smooth": nodes.CombineXYZ(position, 1.0, 0.0),
+                            "Index": nodes.CombineXYZ((k + 0.5) / n, 0.0, 0.0),
+                        },
+                    )
+                )
+            with nodes.Frame("Stepped"):
+                stepped, ramps = lookup(chosen.o.x, ramp["segments"], nodes)
+            with nodes.Frame("Smooth"):
+                smooth, _ = lookup(position, smooth_segments(colors), nodes)
+            nodes.Mix.color(chosen.o.y, stepped, smooth) >> color
+    return bpy.data.node_groups[ramp["name"]], ramps
 
 
 def to_srgb(c: np.ndarray) -> np.ndarray:
@@ -85,15 +167,14 @@ def to_srgb(c: np.ndarray) -> np.ndarray:
     return np.where(c <= 0.0031308, c * 12.92, 1.055 * c ** (1 / 2.4) - 0.055)
 
 
-def set_preview(group: bpy.types.NodeTree, ramp: dict) -> None:
+def set_preview(group: bpy.types.NodeTree, ramps: list, cycles: float) -> None:
     """A left to right gradient, sampled from the group's own Color Ramps."""
-    color_ramps = [n.color_ramp for n in group.nodes if n.bl_idname == "ShaderNodeValToRGB"]
-    x = (np.arange(PREVIEW_SIZE) + 0.5) / PREVIEW_SIZE
+    x = np.mod((np.arange(PREVIEW_SIZE) + 0.5) / PREVIEW_SIZE * cycles, 1.0)
     row = np.ones((PREVIEW_SIZE, 4))
-    for color_ramp, segment in zip(color_ramps, ramp["segments"], strict=True):
+    for segment, node in ramps:
         start, end = segment["start"], segment["end"]
         for i in np.nonzero(x >= start)[0]:
-            row[i, :3] = color_ramp.evaluate((x[i] - start) / (end - start))[:3]
+            row[i, :3] = node.color_ramp.evaluate((x[i] - start) / (end - start))[:3]
     row[:, :3] = to_srgb(row[:, :3])
 
     preview = group.preview_ensure()
@@ -102,7 +183,8 @@ def set_preview(group: bpy.types.NodeTree, ramp: dict) -> None:
     preview.image_pixels_float.foreach_set(pixels.ravel())
 
 
-def mark_asset(group, ramp: dict, editor: str, collection: str) -> None:
+def mark_asset(group, ramps: list, ramp: dict, editor: str, collection: str) -> None:
+    group.color_tag = "COLOR"
     group.asset_mark()
     data = group.asset_data
     data.catalog_id = catalog_id(catalog_path(editor, collection))
@@ -110,14 +192,15 @@ def mark_asset(group, ramp: dict, editor: str, collection: str) -> None:
     for tag in (collection, ramp["group"]):
         if tag:
             data.tags.new(tag, skip_if_exists=True)
-    set_preview(group, ramp)
+    set_preview(group, ramps, ramp.get("cycles", 1.0))
 
 
 def build_file(collection: str, ramps: list[dict], editor: str) -> None:
     directory, make_tree, nodes = EDITORS[editor]
     bpy.ops.wm.read_homefile(use_factory_startup=True, use_empty=True, load_ui=False)
     for ramp in ramps:
-        mark_asset(build_group(ramp, make_tree, nodes), ramp, editor, collection)
+        group, ramp_nodes = build_group(ramp, make_tree, nodes)
+        mark_asset(group, ramp_nodes, ramp, editor, collection)
     path = LIBRARY_DIR / directory / f"{collection}.blend"
     path.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(path), compress=True)

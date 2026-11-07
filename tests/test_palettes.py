@@ -8,7 +8,7 @@ EXPECTED = {
     "cmocean": 22,
     "scientific": 61,
     "metbrewer": 58,
-    "carbonplan": 60,
+    "carbonplan": 58,
     "nasa": 84,
     "ltc": 32,
     "tableau": 13,
@@ -23,6 +23,22 @@ def palettes():
 def test_collection_sizes(palettes):
     counts = {c: sum(p.collection == c for p in palettes) for c in LOADERS}
     assert counts == EXPECTED
+
+
+@pytest.mark.parametrize("collection", ["metbrewer", "ltc", "tableau"])
+def test_hand_picked_sets_are_discrete(palettes, collection):
+    members = [p for p in palettes if p.collection == collection]
+    assert members and all(p.discrete for p in members)
+
+
+def test_carbonplan_modes_differ(palettes):
+    by_name = {p.name: p for p in palettes if p.collection == "carbonplan"}
+    for name, light in by_name.items():
+        if name.endswith("_light"):
+            dark = by_name[name.removesuffix("_light") + "_dark"]
+            assert not np.allclose(light.srgb, dark.srgb), name
+            assert (light.group, dark.group) == ("Light", "Dark"), name
+    assert by_name["rainbow"].group == ""  # the same in both modes
 
 
 def test_names_unique_within_collection(palettes):

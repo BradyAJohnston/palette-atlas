@@ -11,3 +11,5 @@ wheels/
 
 # Built asset library
 library/
+
+scripts/carbonplan/node_modules/
