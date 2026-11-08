@@ -32,6 +32,7 @@ RAMPS_DIR = Path(__file__).parent / "data" / "ramps"
 LIBRARY_DIR = Path(__file__).parents[2] / "library"
 LIBRARY_NAME = "Palette Atlas"
 CONTACT = {"name": "Brady Johnston", "email": "brady.johnston@me.com"}
+LICENSE = "CC0-1.0"  # SPDX identifier, set on every asset
 PREVIEW_SIZE = 128
 MAX_STOPS = 32  # a Color Ramp's limit, as in palettes.py
 EDGE_NUDGE = 1e-6
@@ -164,7 +165,7 @@ def build_group(ramp: dict, make_tree, nodes):
         reverse = reverse_input(tree)
         if discrete:
             mode = tree.inputs.menu(
-                "Mode", "Stepped", description="Stepped bands, a smooth blend, or by Index"
+                "Mode", ramp.get("mode") or "Stepped", description="Stepped bands, a smooth blend, or by Index"
             )
         color = tree.outputs.color("Color", description="Colour at Value")
 
@@ -231,6 +232,7 @@ def mark_asset(group, ramps: list, ramp: dict, editor: str, collection: str) -> 
     category = ramp.get("category", "")
     data.catalog_id = catalog_id(catalog_path(editor, collection, category))
     data.description = f"{ramp['name']} palette, from {ramp['source']}"
+    data.license = LICENSE
     for tag in (collection, category, ramp["group"]):
         if tag:
             data.tags.new(tag, skip_if_exists=True)

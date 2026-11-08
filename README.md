@@ -133,3 +133,9 @@ for generating the reuslting nodes.
    ```sh
    uv run palette-atlas verify [collection ...] --blender /path/to/blender
    ```
+
+## Licence
+
+The node group assets in the library are marked `CC0-1.0`. The code that builds
+them is GPL-3.0-or-later, in `LICENSE`. The palettes themselves come from the
+projects listed in [sources](#sources), each under its own terms.

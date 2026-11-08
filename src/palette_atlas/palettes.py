@@ -154,6 +154,7 @@ class Palette:
     formula: str = ""
     stops: np.ndarray | None = None
     category: str = ""  # the source's own, as a catalog within the collection
+    mode: str = ""  # a discrete palette's default Mode, Stepped if empty
 
     @property
     def digest(self) -> str:
@@ -164,6 +165,7 @@ class Palette:
                 rounded = np.round(a, 6) + 0.0  # + 0.0 folds -0.0 into 0.0
                 digest.update(rounded.astype("<f8").tobytes())
         digest.update(self.formula.encode())
+        digest.update(self.mode.encode())  # empty leaves older digests unchanged
         return digest.hexdigest()[:16]
 
 
@@ -277,10 +279,19 @@ def load_scientific() -> Iterator[Palette]:
     for name, cmap in cmcrameri.cm.cmaps.items():
         if name.endswith("_r"):
             continue
-        if name.endswith("S"):  # categorical sets of 100 colours
-            srgb = np.array([to_rgb(c) for c in cmap.colors])
+        if name.endswith("S"):
+            # categorical sets of 100 colours, ordered so that the first few are
+            # spread along the map; the first MAX_STOPS fit in one ramp
+            srgb = np.array([to_rgb(c) for c in cmap.colors[:MAX_STOPS]])
             yield Palette(
-                name, "scientific", "", source, srgb, True, category="Categorical"
+                name,
+                "scientific",
+                "",
+                source,
+                srgb,
+                True,
+                category="Categorical",
+                mode="Index",
             )
             continue
         yield Palette(

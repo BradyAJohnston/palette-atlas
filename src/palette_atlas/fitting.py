@@ -67,6 +67,7 @@ class Ramp:
     fit_version: int = FIT_VERSION
     formula: str = ""
     category: str = ""
+    mode: str = ""
 
 
 def ramp_basis(pos: np.ndarray, x: np.ndarray, mode: str) -> np.ndarray:
@@ -242,6 +243,7 @@ def _ramp(palette: Palette, segments: list[Segment], formula: str = "") -> Ramp:
         0.0,
         segments,
         category=palette.category,
+        mode=palette.mode,
     )
     ramp.formula = formula
     ramp.error = round(float(np.abs(evaluate_ramp(ramp, x) - palette.srgb).max() * 255), 3)
