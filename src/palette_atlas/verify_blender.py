@@ -1,8 +1,8 @@
-"""Evaluate the built library's node groups in each editor. Run by `node-palettes
+"""Evaluate the built library's node groups in each editor. Run by `palette-atlas
 verify`, inside Blender 5.3:
 
     blender -b --factory-startup --python-exit-code 1 \
-        -P src/node_palettes/verify_blender.py -- cases.json out.npz
+        -P src/palette_atlas/verify_blender.py -- cases.json out.npz
 
 Each case gives a palette, its inputs, and columns: column c reads Value
 (c + offset) / scale, and Index c. Geometry Nodes stores the colour on points;

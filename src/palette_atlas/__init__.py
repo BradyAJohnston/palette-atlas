@@ -31,7 +31,7 @@ def fit(collections: list[str] | None, workers: int | None) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="node-palettes")
+    parser = argparse.ArgumentParser(prog="palette-atlas")
     commands = parser.add_subparsers(dest="command", required=True)
     fit_parser = commands.add_parser("fit", help="fit palettes to Color Ramps")
     fit_parser.add_argument(

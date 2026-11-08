@@ -1,5 +1,5 @@
 // Writes each CarbonPlan colormap, in light and dark mode, to
-// src/node_palettes/data/rgb/carbonplan/<name>_<mode>.rgb as 255 colours, or to
+// src/palette_atlas/data/rgb/carbonplan/<name>_<mode>.rgb as 255 colours, or to
 // <name>.rgb alone when both modes are the same, replacing what was there.
 //
 // CarbonPlan's own scripts/export.mjs passes the mode as a positional argument,
@@ -13,7 +13,7 @@ import { colormaps, makeColormap } from '@carbonplan/colormaps'
 const COUNT = 255
 const out = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  '../../src/node_palettes/data/rgb/carbonplan'
+  '../../src/palette_atlas/data/rgb/carbonplan'
 )
 
 const table = (name, mode) =>

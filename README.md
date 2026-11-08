@@ -1,4 +1,4 @@
-# Scientific Palettes
+# Palette Atlas
 
 Scientific colour palettes as node assets for Blender 5.3, built entirely from code
 into an online asset library. Each palette is one node group per editor (Geometry,
@@ -9,7 +9,7 @@ Shader and Compositor), returning a `Color`:
   take an `Index` and a `Mode`: `Stepped` bands along `Value` (the default), a
   `Smooth` blend of the colours, or the colour at `Index`, wrapping around.
 
-Assets are catalogued as `Scientific Palettes/<editor>/<collection>/<category>`,
+Assets are catalogued as `Palette Atlas/<editor>/<collection>/<category>`,
 using each source's own categories (matplotlib's gallery sections, Crameri's
 classes, CarbonPlan's types, Panoply's table groups for NASA, and cmocean's
 descriptions). MetBrewer, LTC and Tableau have none and stay at the collection;
@@ -18,10 +18,10 @@ MetBrewer's colourblind-friendly palettes are tagged `Colorblind-Friendly`.
 ## Building
 
 1. **Fit** palettes to Color Ramps. The result is cached in
-   `src/node_palettes/data/ramps/`, and only palettes that changed are refitted.
+   `src/palette_atlas/data/ramps/`, and only palettes that changed are refitted.
 
    ```sh
-   uv run node-palettes fit [collection ...]
+   uv run palette-atlas fit [collection ...]
    ```
 
 2. **Build** the `.blend` files, catalogs and thumbnails into `library/`. This runs
@@ -29,7 +29,7 @@ MetBrewer's colourblind-friendly palettes are tagged `Colorblind-Friendly`.
 
    ```sh
    blender -b --factory-startup --python-exit-code 1 \
-       -P src/node_palettes/build.py -- [collection ...]
+       -P src/palette_atlas/build.py -- [collection ...]
    ```
 
 3. **Index** the library.
@@ -42,7 +42,7 @@ MetBrewer's colourblind-friendly palettes are tagged `Colorblind-Friendly`.
    runs Blender itself, from `--blender` or `$BLENDER`.
 
    ```sh
-   uv run node-palettes verify [collection ...] --blender /path/to/blender
+   uv run palette-atlas verify [collection ...] --blender /path/to/blender
    ```
 
 ## Palettes
@@ -66,4 +66,4 @@ ramps to 256 steps in the Shader and Compositor editors, so there a band edge ca
 move by up to 1/256 of the range, and the sharpest turns in a palette are slightly
 rounded off.
 
-Vendored tables are described in `src/node_palettes/data/rgb/README.md`.
+Vendored tables are described in `src/palette_atlas/data/rgb/README.md`.

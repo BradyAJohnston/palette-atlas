@@ -1,7 +1,7 @@
 """Build the asset library from the fitted ramps. Run inside Blender 5.3:
 
     bblender -b --factory-startup --python-exit-code 1 \
-        -P src/node_palettes/build.py -- [collection ...]
+        -P src/palette_atlas/build.py -- [collection ...]
 
 A node group's name must be unique within a .blend, and an asset is named after
 its node group. So that assets keep plain palette names, each editor and
@@ -30,7 +30,7 @@ import formulas  # noqa: E402
 
 RAMPS_DIR = Path(__file__).parent / "data" / "ramps"
 LIBRARY_DIR = Path(__file__).parents[2] / "library"
-LIBRARY_NAME = "Scientific Palettes"
+LIBRARY_NAME = "Palette Atlas"
 CONTACT = {"name": "Brady Johnston", "email": "brady.johnston@me.com"}
 PREVIEW_SIZE = 128
 MAX_STOPS = 32  # a Color Ramp's limit, as in palettes.py

@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from node_palettes import fitting
-from node_palettes.fitting import (
+from palette_atlas import fitting
+from palette_atlas.fitting import (
     copy_stops,
     evaluate,
     evaluate_ramp,
@@ -11,7 +11,7 @@ from node_palettes.fitting import (
     fit_stops,
     read_ramps,
 )
-from node_palettes.palettes import MAX_STOPS, Palette, load_palettes
+from palette_atlas.palettes import MAX_STOPS, Palette, load_palettes
 
 
 def palette(srgb, name="test", discrete=False):
@@ -150,7 +150,7 @@ def stored_ramps():
 
 @pytest.mark.parametrize("source, ramp", stored_ramps())
 def test_stored_ramp_matches_source(source, ramp):
-    assert ramp is not None, "run `node-palettes fit`"
+    assert ramp is not None, "run `palette-atlas fit`"
     assert ramp.digest == source.digest and ramp.fit_version == fitting.FIT_VERSION
     assert ramp.error <= fitting.LOSSY
     if ramp.formula:

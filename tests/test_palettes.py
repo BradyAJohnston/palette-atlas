@@ -3,8 +3,8 @@ import pytest
 
 from matplotlib import _cm
 
-from node_palettes import formulas
-from node_palettes.palettes import LOADERS, RGB_DIR, load_palettes, read_rgb_table
+from palette_atlas import formulas
+from palette_atlas.palettes import LOADERS, RGB_DIR, load_palettes, read_rgb_table
 
 EXPECTED = {
     "matplotlib": 85,
@@ -118,7 +118,7 @@ def test_uncategorised_collections_stay_flat(palettes, collection):
 
 def test_category_lists_name_real_palettes():
     """A name dropped or renamed upstream would otherwise linger in the lists."""
-    from node_palettes import palettes as module
+    from palette_atlas import palettes as module
 
     for collection, lists in [
         ("cmocean", module.CMOCEAN_CATEGORIES),
