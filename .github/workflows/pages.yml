@@ -1,0 +1,59 @@
+name: Build and deploy library
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Blender's system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxi6 libxxf86vm1 libxfixes3 libxrender1 \
+            libxkbcommon0 libsm6 libgl1 libegl1
+
+      # installs the 5.3 daily until 5.3 is released
+      - uses: bradyajohnston/setup-blender@v5
+        with:
+          version: "5.3"
+
+      - name: Install nodebpy into Blender's Python
+        run: |
+          python=$(ls "$(dirname "$(which blender)")"/*/python/bin/python3.*[0-9] | head -1)
+          "$python" -m ensurepip
+          "$python" -m pip install "nodebpy>=520.41.0"
+
+      - name: Build library
+        run: |
+          blender -b --factory-startup --python-exit-code 1 \
+            -P src/palette_atlas/build.py
+          blender -c asset_listing generate library
+          find library -name '*.blend1' -delete
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: library
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
