@@ -1,14 +1,15 @@
 """Fit palettes to Blender Color Ramps of at most 32 stops, and cache the result.
 
-Stop colours and positions are fitted by least squares against a numpy model of
-Blender's ramp (BKE_colorband_evaluate). Linear and B-spline interpolation are
-each tried and the one needing fewer stops is kept. Error is measured in 8-bit
-sRGB against the palette's samples. Palettes of 32 colours or fewer need no fit,
-their colours are copied exactly.
+Ramps hold sRGB colours, blended in sRGB as the packages blend them, and the node
+group converts the result to linear afterwards. Stop colours and positions are
+fitted by least squares against a numpy model of Blender's ramp
+(BKE_colorband_evaluate). Linear and B-spline interpolation are each tried and
+the one needing fewer stops is kept. Error is measured in 8-bit sRGB against the
+palette's samples. Palettes of 32 colours or fewer need no fit, their colours
+are copied exactly, as are matplotlib's own stops and formulas.
 
 A palette that one ramp can't hold is split into even segments, one ramp each.
 A segment of 32 samples or fewer is copied exactly, so splitting always succeeds.
-A palette that repeats is instead fitted as one ramp holding a single repeat.
 
 Ported from MolecularNodes' docs/dev/colormap_node.py.
 """
@@ -23,27 +24,27 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
+from scipy.linalg import lstsq
 from scipy.optimize import least_squares
 
+from . import formulas
 from .palettes import MAX_STOPS, Palette
 
 RAMPS_DIR = Path(__file__).parent / "data" / "ramps"
 TOLERANCE = 1.0  # fewest stops that keep every sample within this, in 1/255 sRGB
 LOSSY = 2.0  # a single ramp worse than this is split into segments
-# one repeat of flag needs about 2.2 at 32 stops; kept to one ramp regardless
-PERIODIC_LOSSY = 2.5
 # stops closer than this collapse in Blender's 32-bit positions, wrecking the
-# colour at the end of a ramp; still well under the 1/255 spacing of the samples
+# colour at the end of a ramp; fitted stops also keep a sample apart (fit_stops)
 MIN_GAP = 1e-4
 MODES = ("LINEAR", "B_SPLINE")
-FIT_VERSION = 4  # raise when a change here should invalidate cached fits
+FIT_VERSION = 7  # raise when a change here should invalidate cached fits
 
 
 @dataclass
 class Segment:
     """One Color Ramp covering start..end of a palette.
 
-    Stops are (position, r, g, b) in linear colour, positions local to the segment.
+    Stops are (position, r, g, b) in sRGB, positions local to the segment.
     """
 
     start: float
@@ -54,7 +55,8 @@ class Segment:
 
 @dataclass
 class Ramp:
-    """A palette as one or more Color Ramps, for the build to turn into nodes."""
+    """A palette as one or more Color Ramps, or a formula from formulas.py, for
+    the build to turn into nodes."""
 
     name: str
     group: str
@@ -63,16 +65,8 @@ class Ramp:
     error: float
     segments: list[Segment]
     fit_version: int = FIT_VERSION
-    cycles: float = 1.0  # Value wraps into the segments this many times
-
-
-def to_linear(c):
-    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
-
-
-def to_srgb(c):
-    c = np.clip(c, 0.0, None)
-    return np.where(c <= 0.0031308, c * 12.92, 1.055 * c ** (1 / 2.4) - 0.055)
+    formula: str = ""
+    category: str = ""
 
 
 def ramp_basis(pos: np.ndarray, x: np.ndarray, mode: str) -> np.ndarray:
@@ -118,36 +112,46 @@ def evaluate(stops: np.ndarray, x: np.ndarray, mode: str) -> np.ndarray:
     """sRGB colours of a ramp at x, as Blender would give them."""
     pos, cols = stops[:, 0], stops[:, 1:4]
     if mode == "CONSTANT":
-        return to_srgb(cols[np.searchsorted(pos, x, side="right") - 1])
-    return to_srgb(np.clip(ramp_basis(pos, x, mode) @ cols, 0, 1))
+        return cols[np.searchsorted(pos, x, side="right") - 1]
+    return np.clip(ramp_basis(pos, x, mode) @ cols, 0, 1)
 
 
 def fit_stops(srgb: np.ndarray, n: int, mode: str):
-    """(error, positions, linear colours) of an n-stop ramp fitted to srgb."""
+    """(error, positions, colours) of an n-stop ramp fitted to srgb.
+
+    Fitted to the samples alone, a ramp can spike between them unseen: stops can
+    zigzag about a sample and still land on it. Shader and Compositor show such
+    spikes once they bake the ramp to a table. So the fit also holds the ramp to
+    the straight line between neighbouring samples, at the midpoint, and keeps
+    stops at least a sample apart, so no stop slips between those points.
+    """
     x = np.linspace(0.0, 1.0, len(srgb))
+    gap = max(MIN_GAP, 1.0 / (len(srgb) - 1))
+    fit_x = np.linspace(0.0, 1.0, 2 * len(srgb) - 1)  # samples and midpoints
+    target = np.stack([np.interp(fit_x, x, srgb[:, k]) for k in range(3)], 1)
 
     def unpack(p):
         gaps = np.exp(p[: n - 1] - p[: n - 1].max())
-        gaps = MIN_GAP + gaps / gaps.sum() * (1 - (n - 1) * MIN_GAP)
+        gaps = gap + gaps / gaps.sum() * (1 - (n - 1) * gap)
         pos = np.concatenate([[0.0], np.cumsum(gaps)])
         pos[-1] = 1.0
         return pos, p[n - 1 :].reshape(n, 3)
 
     def error(pos, cols):
-        out = to_srgb(np.clip(ramp_basis(pos, x, mode) @ cols, 0, 1))
-        return (out - srgb) * 255
+        return (np.clip(ramp_basis(pos, fit_x, mode) @ cols, 0, 1) - target) * 255
 
     # start from the knots a greedy linear fit through the samples would pick
-    lin = to_linear(srgb)
     chosen = [0, len(x) - 1]
     while len(chosen) < n:
         s = sorted(chosen)
-        approx = np.stack([np.interp(x, x[s], lin[s, k]) for k in range(3)], 1)
-        e = np.abs(to_srgb(approx) - srgb).max(1)
+        approx = np.stack([np.interp(x, x[s], srgb[s, k]) for k in range(3)], 1)
+        e = np.abs(approx - srgb).max(1)
         e[s] = -1
         chosen.append(int(e.argmax()))
     pos = x[sorted(chosen)]
-    cols = np.linalg.lstsq(ramp_basis(pos, x, mode), lin, rcond=None)[0]
+    # QR rather than numpy's SVD solver, which fails to converge on some
+    # well-conditioned bases here (cork, B-spline, 26 stops)
+    cols = lstsq(ramp_basis(pos, fit_x, mode), target, lapack_driver="gelsy")[0]
     cols = np.clip(cols, 1e-9, 1 - 1e-9)
 
     best = (np.abs(error(pos, cols)).max(), pos, cols)
@@ -198,8 +202,8 @@ def fewest_stops(srgb: np.ndarray, mode: str):
 
 def evaluate_ramp(ramp: Ramp, x: np.ndarray) -> np.ndarray:
     """sRGB colours of a whole palette at x, as its nodes would give them."""
-    if ramp.cycles != 1.0:
-        x = np.mod(x * ramp.cycles, 1.0)  # the group's Fraction node
+    if ramp.formula:
+        return formulas.evaluate(ramp.formula, x)
     out = np.zeros((len(x), 3))
     for i, segment in enumerate(ramp.segments):
         chosen = x >= segment.start if i else np.ones(len(x), bool)
@@ -219,45 +223,56 @@ def _segment(start, end, interpolation, pos, cols) -> Segment:
 def _fit_segment(srgb: np.ndarray, start: float, end: float) -> Segment:
     n = len(srgb)
     if n <= MAX_STOPS:
-        return _segment(start, end, "LINEAR", np.linspace(0, 1, n), to_linear(srgb))
+        return _segment(start, end, "LINEAR", np.linspace(0, 1, n), srgb)
     fits = {mode: fewest_stops(srgb, mode) for mode in MODES}
     # fewest stops, then lowest error; MODES order settles any tie
     mode = min(MODES, key=lambda m: (len(fits[m][1]), fits[m][0]))
     return _segment(start, end, mode, fits[mode][1], fits[mode][2])
 
 
-def _ramp(palette: Palette, segments: list[Segment]) -> Ramp:
+def _ramp(palette: Palette, segments: list[Segment], formula: str = "") -> Ramp:
     """A ramp as stored, with its error measured on the rounded stops."""
     n = len(palette.srgb)
     x = (np.arange(n) + 0.5) / n if palette.discrete else np.linspace(0, 1, n)
-    ramp = Ramp(palette.name, palette.group, palette.source, palette.digest, 0.0, segments)
-    ramp.cycles = palette.cycles
+    ramp = Ramp(
+        palette.name,
+        palette.group,
+        palette.source,
+        palette.digest,
+        0.0,
+        segments,
+        category=palette.category,
+    )
+    ramp.formula = formula
     ramp.error = round(float(np.abs(evaluate_ramp(ramp, x) - palette.srgb).max() * 255), 3)
     return ramp
 
 
 def copy_stops(palette: Palette) -> Ramp:
-    """A ramp holding the palette's colours exactly."""
+    """A ramp holding the palette's colours exactly: its formula, its package's
+    own stops, or its colours."""
+    if palette.formula:
+        return _ramp(palette, [], palette.formula)
+    if palette.stops is not None:
+        pos, cols = palette.stops[:, 0], palette.stops[:, 1:]
+        return _ramp(palette, [_segment(0, 1, "LINEAR", pos, cols)])
     n = len(palette.srgb)
     if not palette.discrete:
-        cols = to_linear(palette.srgb)
+        cols = palette.srgb
         return _ramp(palette, [_segment(0, 1, "LINEAR", np.linspace(0, 1, n), cols)])
     # matplotlib maps x to colour floor(x * N), a constant ramp with stop i at
     # i / N does the same
     bounds = np.linspace(0, n, math.ceil(n / MAX_STOPS) + 1).round().astype(int)
     segments = []
     for a, b in zip(bounds, bounds[1:]):
-        cols = to_linear(palette.srgb[a:b])
+        cols = palette.srgb[a:b]
         pos = np.arange(b - a) / (b - a)
         segments.append(_segment(a / n, b / n, "CONSTANT", pos, cols))
     return _ramp(palette, segments)
 
 
 def fit_split(palette: Palette, parts: int) -> Ramp:
-    """Fit a palette as even segments, sharing the sample where they meet, or
-    a repeating palette as one ramp holding a single repeat."""
-    if palette.period is not None:
-        return _ramp(palette, [_fit_segment(palette.period, 0.0, 1.0)])
+    """Fit a palette as even segments, sharing the sample where they meet."""
     n = len(palette.srgb)
     bounds = np.linspace(0, n - 1, parts + 1).round().astype(int)
     return _ramp(
@@ -271,17 +286,18 @@ def fit_split(palette: Palette, parts: int) -> Ramp:
 
 def most_parts(palette: Palette) -> int:
     """Segments at which every segment is short enough to copy exactly."""
-    if palette.period is not None:
-        return 1
     return math.ceil((len(palette.srgb) - 1) / (MAX_STOPS - 1))
 
 
 def is_stepped(ramp: Ramp) -> bool:
-    return all(s.interpolation == "CONSTANT" for s in ramp.segments)
+    return bool(ramp.segments) and all(
+        s.interpolation == "CONSTANT" for s in ramp.segments
+    )
 
 
 def needs_fit(palette: Palette) -> bool:
-    return palette.period is not None or (not palette.discrete and len(palette.srgb) > MAX_STOPS)
+    exact = palette.discrete or palette.formula or palette.stops is not None
+    return not exact and len(palette.srgb) > MAX_STOPS
 
 
 def read_ramps(collection: str, ramps_dir: Path = RAMPS_DIR) -> dict[str, Ramp]:
@@ -289,8 +305,11 @@ def read_ramps(collection: str, ramps_dir: Path = RAMPS_DIR) -> dict[str, Ramp]:
     if not path.exists():
         return {}
     ramps = {}
+    known = set(Ramp.__dataclass_fields__)
     for fields in json.loads(path.read_text()):
         segments = [Segment(**s) for s in fields.pop("segments")]
+        # fields from older fits are dropped; FIT_VERSION marks those for a refit
+        fields = {k: v for k, v in fields.items() if k in known}
         ramps[fields["name"]] = Ramp(**fields, segments=segments)
     return ramps
 
@@ -337,8 +356,9 @@ def fit_palettes(
             and hit.fit_version == FIT_VERSION
             and is_stepped(hit) == palette.discrete
         ):
-            # the group and source can change without the colours changing
+            # these can change without the colours changing
             hit.group, hit.source = palette.group, palette.source
+            hit.category = palette.category
             done[key] = hit
         elif needs_fit(palette):
             pending.append(palette)

@@ -7,8 +7,12 @@ A node group's name must be unique within a .blend, and an asset is named after
 its node group. So that assets keep plain palette names, each editor and
 collection gets its own file, library/<editor>/<collection>.blend.
 
+Ramps hold sRGB colours, blended in sRGB as the palettes' packages blend them,
+and each group converts its colour to linear at the end, as Blender expects.
+matplotlib's formula palettes are built from math nodes instead of ramps.
+
 This is a plain script, as Blender has neither matplotlib nor scipy to import
-the rest of the package with.
+the rest of the package with; formulas.py needs only numpy.
 """
 
 import json
@@ -20,6 +24,9 @@ from pathlib import Path
 import bpy
 import numpy as np
 from nodebpy import TreeBuilder, compositor, geometry, shader
+
+sys.path.insert(0, str(Path(__file__).parent))
+import formulas  # noqa: E402
 
 RAMPS_DIR = Path(__file__).parent / "data" / "ramps"
 LIBRARY_DIR = Path(__file__).parents[2] / "library"
@@ -36,8 +43,9 @@ EDITORS = {
 }
 
 
-def catalog_path(editor: str, collection: str) -> str:
-    return f"{LIBRARY_NAME}/{editor}/{collection}"
+def catalog_path(editor: str, collection: str, category: str = "") -> str:
+    path = f"{LIBRARY_NAME}/{editor}/{collection}"
+    return f"{path}/{category}" if category else path
 
 
 def catalog_id(path: str) -> str:
@@ -46,7 +54,8 @@ def catalog_id(path: str) -> str:
 
 
 def is_discrete(ramp: dict) -> bool:
-    return all(s["interpolation"] == "CONSTANT" for s in ramp["segments"])
+    segments = ramp["segments"]  # none for a formula
+    return bool(segments) and all(s["interpolation"] == "CONSTANT" for s in segments)
 
 
 def smooth_segments(colors: list) -> list[dict]:
@@ -92,6 +101,37 @@ def lookup(t, segments: list[dict], nodes):
     return result, ramps
 
 
+class NodeOps:
+    """The operations formulas.py uses, as math nodes."""
+
+    def __init__(self, nodes):
+        math_ = nodes.Math
+        self.sqrt, self.sin, self.cos = math_.square_root, math_.sine, math_.cosine
+        self.abs, self.min, self.max = math_.absolute, math_.minimum, math_.maximum
+        self.pow = math_.power
+
+
+def formula_channels(name: str, position, nodes) -> list:
+    """sRGB channels of a formula palette, clipped to 0..1 as matplotlib does."""
+    channels = formulas.FORMULAS[name](NodeOps(nodes), position)
+    return [nodes.Math.maximum(c, 0.0, use_clamp=True) for c in channels]
+
+
+def srgb_to_linear(channels: list, nodes):
+    """The sRGB colour as Blender's linear colour, per channel."""
+    out = []
+    for c in channels:
+        low = c / 12.92
+        high = nodes.Math.power(nodes.Math.multiply_add(c, 1 / 1.055, 0.055 / 1.055), 2.4)
+        out.append(nodes.Mix.float(nodes.Math.greater_than(c, 0.04045), low, high))
+    return nodes.CombineXYZ(*out)
+
+
+def channels_of(color, nodes) -> list:
+    separate = nodes.SeparateXYZ(color)
+    return [separate.o.x, separate.o.y, separate.o.z]
+
+
 def value_input(tree):
     return tree.inputs.float(
         "Value",
@@ -110,8 +150,9 @@ def reverse_input(tree):
 def build_group(ramp: dict, make_tree, nodes):
     """(node group, the ramps showing its default colours) for the palette.
 
-    A smooth palette maps Value to its fitted ramps. A discrete one has a Mode:
-    Stepped bands, a Smooth blend of its colours, or the colour at Index.
+    A smooth palette maps Value through its ramps, or its formula. A discrete one
+    has a Mode: Stepped bands, a Smooth blend of its colours, or the colour at
+    Index. Either way the sRGB result is converted to linear at the end.
     """
     discrete = is_discrete(ramp)
     with make_tree(ramp["name"]) as tree:
@@ -129,13 +170,14 @@ def build_group(ramp: dict, make_tree, nodes):
 
         with nodes.Frame("Position"):
             position = nodes.Mix.float(reverse, value, 1.0 - value)
-            if ramp.get("cycles", 1.0) != 1.0:
-                # a repeating palette holds one repeat, which Value wraps into
-                position = nodes.Math.fraction(position * ramp["cycles"])
-        if not discrete:
+        if ramp.get("formula"):
+            with nodes.Frame("Formula"):
+                channels = formula_channels(ramp["formula"], position, nodes)
+            ramps = []
+        elif not discrete:
             with nodes.Frame("Palette"):
                 result, ramps = lookup(position, ramp["segments"], nodes)
-            result >> color
+                channels = channels_of(result, nodes)
         else:
             colors = [stop[1:] for s in ramp["segments"] for stop in s["stops"]]
             n = len(colors)
@@ -158,24 +200,23 @@ def build_group(ramp: dict, make_tree, nodes):
                 stepped, ramps = lookup(chosen.o.x, ramp["segments"], nodes)
             with nodes.Frame("Smooth"):
                 smooth, _ = lookup(position, smooth_segments(colors), nodes)
-            nodes.Mix.color(chosen.o.y, stepped, smooth) >> color
+            channels = channels_of(nodes.Mix.color(chosen.o.y, stepped, smooth), nodes)
+        with nodes.Frame("sRGB to Linear"):
+            srgb_to_linear(channels, nodes) >> color
     return bpy.data.node_groups[ramp["name"]], ramps
 
 
-def to_srgb(c: np.ndarray) -> np.ndarray:
-    c = np.clip(c, 0.0, 1.0)
-    return np.where(c <= 0.0031308, c * 12.92, 1.055 * c ** (1 / 2.4) - 0.055)
-
-
-def set_preview(group: bpy.types.NodeTree, ramps: list, cycles: float) -> None:
-    """A left to right gradient, sampled from the group's own Color Ramps."""
-    x = np.mod((np.arange(PREVIEW_SIZE) + 0.5) / PREVIEW_SIZE * cycles, 1.0)
+def set_preview(group: bpy.types.NodeTree, ramps: list, formula: str) -> None:
+    """A left to right gradient in sRGB, sampled from the group's own Color Ramps,
+    or its formula."""
+    x = (np.arange(PREVIEW_SIZE) + 0.5) / PREVIEW_SIZE
     row = np.ones((PREVIEW_SIZE, 4))
+    if formula:
+        row[:, :3] = formulas.evaluate(formula, x)
     for segment, node in ramps:
         start, end = segment["start"], segment["end"]
         for i in np.nonzero(x >= start)[0]:
             row[i, :3] = node.color_ramp.evaluate((x[i] - start) / (end - start))[:3]
-    row[:, :3] = to_srgb(row[:, :3])
 
     preview = group.preview_ensure()
     preview.image_size = (PREVIEW_SIZE, PREVIEW_SIZE)
@@ -187,12 +228,13 @@ def mark_asset(group, ramps: list, ramp: dict, editor: str, collection: str) -> 
     group.color_tag = "COLOR"
     group.asset_mark()
     data = group.asset_data
-    data.catalog_id = catalog_id(catalog_path(editor, collection))
+    category = ramp.get("category", "")
+    data.catalog_id = catalog_id(catalog_path(editor, collection, category))
     data.description = f"{ramp['name']} palette, from {ramp['source']}"
-    for tag in (collection, ramp["group"]):
+    for tag in (collection, category, ramp["group"]):
         if tag:
             data.tags.new(tag, skip_if_exists=True)
-    set_preview(group, ramps, ramp.get("cycles", 1.0))
+    set_preview(group, ramps, ramp.get("formula", ""))
 
 
 def build_file(collection: str, ramps: list[dict], editor: str) -> None:
@@ -210,8 +252,11 @@ def write_catalogs(collections: list[str]) -> None:
     lines = ["VERSION 1"]
     for editor in EDITORS:
         for collection in collections:
-            path = catalog_path(editor, collection)
-            lines.append(f"{catalog_id(path)}:{path}:{path.replace('/', '-')}")
+            ramps = json.loads((RAMPS_DIR / f"{collection}.json").read_text())
+            categories = {r.get("category", "") for r in ramps}  # "" is the collection
+            for category in sorted(categories | {""}):
+                path = catalog_path(editor, collection, category)
+                lines.append(f"{catalog_id(path)}:{path}:{path.replace('/', '-')}")
     (LIBRARY_DIR / "blender_assets.cats.txt").write_text("\n".join(lines) + "\n")
 
 

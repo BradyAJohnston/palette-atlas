@@ -1,6 +1,9 @@
 import numpy as np
 import pytest
 
+from matplotlib import _cm
+
+from node_palettes import formulas
 from node_palettes.palettes import LOADERS, RGB_DIR, load_palettes, read_rgb_table
 
 EXPECTED = {
@@ -39,6 +42,24 @@ def test_carbonplan_modes_differ(palettes):
             assert not np.allclose(light.srgb, dark.srgb), name
             assert (light.group, dark.group) == ("Light", "Dark"), name
     assert by_name["rainbow"].group == ""  # the same in both modes
+
+
+@pytest.mark.parametrize("name", sorted(formulas.FORMULAS))
+def test_formulas_match_matplotlib(name):
+    x = np.linspace(0, 1, 10001)
+    functions = _cm.datad[name]
+    expected = np.clip(np.stack([functions[c](x) for c in ("red", "green", "blue")], 1), 0, 1)
+    assert np.abs(formulas.evaluate(name, x) - expected).max() < 1e-12
+
+
+def test_matplotlib_package_stops_reproduce_its_samples(palettes):
+    with_stops = [p for p in palettes if p.stops is not None]
+    assert len(with_stops) == 49
+    for p in with_stops:
+        x = np.linspace(0, 1, len(p.srgb))
+        out = np.stack([np.interp(x, p.stops[:, 0], p.stops[:, k]) for k in (1, 2, 3)], 1)
+        assert np.abs(out - p.srgb).max() < 1e-9, p.name
+        assert len(p.stops) <= 32 and np.all(np.diff(p.stops[:, 0]) > 0), p.name
 
 
 def test_names_unique_within_collection(palettes):
@@ -82,3 +103,35 @@ def test_no_nasa_table_ends_in_a_footer(palettes):
         if p.collection == "nasa":
             last = np.round(p.srgb[-1] * 255)
             assert not (last[2] == 1 and last[0] <= 1), p.name
+
+
+@pytest.mark.parametrize("collection", ["matplotlib", "cmocean", "scientific", "carbonplan", "nasa"])
+def test_categorised_collections_have_categories(palettes, collection):
+    members = [p for p in palettes if p.collection == collection]
+    assert members and all(p.category for p in members)
+
+
+@pytest.mark.parametrize("collection", ["metbrewer", "ltc", "tableau"])
+def test_uncategorised_collections_stay_flat(palettes, collection):
+    assert not any(p.category for p in palettes if p.collection == collection)
+
+
+def test_category_lists_name_real_palettes():
+    """A name dropped or renamed upstream would otherwise linger in the lists."""
+    from node_palettes import palettes as module
+
+    for collection, lists in [
+        ("cmocean", module.CMOCEAN_CATEGORIES),
+        ("nasa", module.NASA_CATEGORIES),
+    ]:
+        names = [n for members in lists.values() for n in members]
+        loaded = {p.name for p in load_palettes([collection])}
+        assert len(names) == len(set(names)) and set(names) == loaded, collection
+    names = [n for members in module.CARBONPLAN_CATEGORIES.values() for n in members]
+    loaded = {p.name.removesuffix("_light").removesuffix("_dark") for p in load_palettes(["carbonplan"])}
+    assert len(names) == len(set(names)) and set(names) == loaded
+
+
+def test_metbrewer_colorblind_tag(palettes):
+    tagged = [p for p in palettes if p.collection == "metbrewer" and p.group]
+    assert len(tagged) == 24 and {p.group for p in tagged} == {"Colorblind-Friendly"}

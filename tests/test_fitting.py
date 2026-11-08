@@ -10,8 +10,6 @@ from node_palettes.fitting import (
     fit_split,
     fit_stops,
     read_ramps,
-    to_linear,
-    to_srgb,
 )
 from node_palettes.palettes import MAX_STOPS, Palette, load_palettes
 
@@ -23,11 +21,6 @@ def palette(srgb, name="test", discrete=False):
 def gradient(n=256):
     x = np.linspace(0, 1, n)[:, None]
     return x * np.array([1.0, 0.5, 0.2])
-
-
-def test_srgb_round_trip():
-    c = np.linspace(0, 1, 101)
-    assert np.allclose(to_srgb(to_linear(c)), c)
 
 
 def test_discrete_matches_matplotlib_indexing():
@@ -67,14 +60,23 @@ def test_splitting_recovers_what_one_ramp_cannot_hold():
     assert all(len(s.stops) <= MAX_STOPS for s in exact.segments)
 
 
+def samples_and_midpoints(srgb):
+    """The points fit_stops holds a ramp to: samples, and the straight line
+    between neighbouring samples at the midpoint."""
+    x = np.linspace(0, 1, 2 * len(srgb) - 1)
+    ref = np.stack([np.interp(x, np.linspace(0, 1, len(srgb)), srgb[:, k]) for k in range(3)], 1)
+    return x, ref
+
+
 @pytest.mark.parametrize("mode", ["LINEAR", "B_SPLINE"])
 def test_fit_reports_its_true_error(mode):
     srgb = gradient()
     error, pos, cols = fit_stops(srgb, 12, mode)
     stops = np.column_stack([pos, cols])
-    out = evaluate(stops, np.linspace(0, 1, 256), mode)
-    assert np.abs(out - srgb).max() * 255 == pytest.approx(error, abs=1e-6)
-    assert error < 1.0
+    x, ref = samples_and_midpoints(srgb)
+    assert np.abs(evaluate(stops, x, mode) - ref).max() * 255 == pytest.approx(error, abs=1e-6)
+    if mode == "LINEAR":
+        assert error < 0.01  # a straight line in sRGB, which ramps now blend in
 
 
 def test_stops_stay_apart_at_a_hard_final_step():
@@ -83,8 +85,20 @@ def test_stops_stay_apart_at_a_hard_final_step():
     error, pos, cols = fit_stops(srgb, 16, "B_SPLINE")
     assert np.diff(pos).min() >= fitting.MIN_GAP * 0.99
     stops = np.round(np.column_stack([pos, cols]), 6)  # as stored
-    out = evaluate(stops, np.linspace(0, 1, 256), "B_SPLINE")
-    assert np.abs(out - srgb).max() * 255 == pytest.approx(error, abs=0.05)
+    x, ref = samples_and_midpoints(srgb)
+    out = evaluate(stops, x, "B_SPLINE")
+    assert np.abs(out - ref).max() * 255 == pytest.approx(error, abs=0.05)
+
+
+def test_fit_cannot_hide_a_spike_between_samples():
+    # samples alone would let a stop between two of them take any colour
+    srgb = gradient(64)
+    error, pos, cols = fit_stops(srgb, 20, "LINEAR")
+    assert np.diff(pos).min() >= 1 / 63 * 0.99
+    fine = np.linspace(0, 1, 63 * 16 + 1)
+    ref = np.stack([np.interp(fine, np.linspace(0, 1, 64), srgb[:, k]) for k in range(3)], 1)
+    out = evaluate(np.column_stack([pos, cols]), fine, "LINEAR")
+    assert np.abs(out - ref).max() * 255 < 1.0
 
 
 def test_cache_skips_unchanged_and_refits_changed(tmp_path):
@@ -109,18 +123,13 @@ def test_cache_refits_when_a_palette_becomes_discrete(tmp_path):
     assert [s.interpolation for s in ramp.segments] == ["CONSTANT"]
 
 
-def test_repeating_palette_is_one_ramp_wrapped():
-    def wave(t):
-        return 0.5 + 0.4 * np.sin(2 * np.pi * t[:, None] + np.array([0, 2, 4]))
-
-    cycles = 6.5
-    p = Palette(
-        "w", "test", "", "test", wave(np.linspace(0, 1, 256) * cycles),
-        cycles=cycles, period=wave(np.linspace(0, 1, 512)),
-    )
-    ramp = fit_split(p, 1)
-    assert len(ramp.segments) == 1 and ramp.cycles == cycles
-    assert ramp.error < 1.0  # measured on the whole palette, through the wrap
+def test_formula_and_package_stops_are_copied_not_fitted():
+    by_name = {p.name: p for p in load_palettes(["matplotlib"])}
+    jet = copy_stops(by_name["jet"])
+    assert len(jet.segments) == 1 and len(jet.segments[0].stops) == 12
+    assert jet.error < 1e-3
+    gnuplot = copy_stops(by_name["gnuplot"])
+    assert gnuplot.formula == "gnuplot" and gnuplot.segments == [] and gnuplot.error < 1e-9
 
 
 def test_worker_count_does_not_change_results(tmp_path):
@@ -143,8 +152,11 @@ def stored_ramps():
 def test_stored_ramp_matches_source(source, ramp):
     assert ramp is not None, "run `node-palettes fit`"
     assert ramp.digest == source.digest and ramp.fit_version == fitting.FIT_VERSION
+    assert ramp.error <= fitting.LOSSY
+    if ramp.formula:
+        assert not ramp.segments and ramp.error < 1e-9
+        return
     assert ramp.segments[0].start == 0.0 and ramp.segments[-1].end == 1.0
-    assert ramp.error <= (fitting.LOSSY if source.period is None else fitting.PERIODIC_LOSSY)
     if len(ramp.segments) > 1:
         assert ramp.error <= fitting.TOLERANCE
 
@@ -162,3 +174,14 @@ def test_stored_ramp_matches_source(source, ramp):
     x = (np.arange(n) + 0.5) / n if source.discrete else np.linspace(0, 1, n)
     error = np.abs(evaluate_ramp(ramp, x) - source.srgb).max() * 255
     assert error == pytest.approx(ramp.error, abs=0.002)
+
+    if not source.discrete and source.stops is None:
+        # between neighbouring samples, a fitted ramp stays within their range;
+        # matplotlib's own stops are checked between samples by `verify`
+        steps = 16
+        fine = evaluate_ramp(ramp, np.linspace(0, 1, (n - 1) * steps + 1))[:-1]
+        fine = fine.reshape(n - 1, steps, 3)
+        low = np.minimum(source.srgb[:-1], source.srgb[1:])[:, None]
+        high = np.maximum(source.srgb[:-1], source.srgb[1:])[:, None]
+        outside = np.maximum(low - fine, fine - high).max() * 255
+        assert outside <= max(ramp.error, 1.0) + 0.5

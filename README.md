@@ -9,6 +9,12 @@ Shader and Compositor), returning a `Color`:
   take an `Index` and a `Mode`: `Stepped` bands along `Value` (the default), a
   `Smooth` blend of the colours, or the colour at `Index`, wrapping around.
 
+Assets are catalogued as `Scientific Palettes/<editor>/<collection>/<category>`,
+using each source's own categories (matplotlib's gallery sections, Crameri's
+classes, CarbonPlan's types, Panoply's table groups for NASA, and cmocean's
+descriptions). MetBrewer, LTC and Tableau have none and stay at the collection;
+MetBrewer's colourblind-friendly palettes are tagged `Colorblind-Friendly`.
+
 ## Building
 
 1. **Fit** palettes to Color Ramps. The result is cached in
@@ -41,11 +47,23 @@ Shader and Compositor), returning a `Color`:
 
 ## Palettes
 
-A Color Ramp holds at most 32 stops. Longer palettes are fitted to fewer stops, and
-any that one ramp can't hold within 2/255 are split across several ramps, chosen by
-`Value`, until they are within 1/255. `flag` and `prism` repeat a sine wave, so
-each holds one repeat in a single ramp and wraps `Value` into it, within 2.2/255. Blender bakes ramps to 256 steps in the Shader
-and Compositor editors, so there a band edge can move by up to 1/256 of the range,
-and the sharpest turns in a palette are slightly rounded off.
+Ramps hold sRGB colours and blend them in sRGB, as the palettes' own packages do,
+and each group converts its colour to linear at the end, as Blender expects. This
+means the colour swatches on a ramp look washed out if you open a group.
+
+Where matplotlib defines a palette exactly, the group follows that definition
+rather than samples of it:
+
+- **Formulas** (`gnuplot`, `rainbow`, `cubehelix`, `flag`, `prism`, `afmhot`, `ocean`,
+  `gnuplot2`, `gist_heat`) are built from math nodes.
+- **Colour lists and segments** (the ColorBrewer maps, `jet`, `hsv` and others) use
+  matplotlib's own stops, where they fit in one ramp.
+
+Every other palette is fitted. A Color Ramp holds at most 32 stops. Longer palettes
+are fitted to fewer stops, and any that one ramp can't hold within 2/255 are split
+across several ramps, chosen by `Value`, until they are within 1/255. Blender bakes
+ramps to 256 steps in the Shader and Compositor editors, so there a band edge can
+move by up to 1/256 of the range, and the sharpest turns in a palette are slightly
+rounded off.
 
 Vendored tables are described in `src/node_palettes/data/rgb/README.md`.
