@@ -23,6 +23,14 @@ MetBrewer's colourblind-friendly palettes are tagged `Colorblind-Friendly`.
 See the [gallery](#gallery) for examples from each collection, and
 [sources](#sources) for where each comes from.
 
+## Installation
+
+Add this URL as a remote asset library in Blender:
+
+```
+https://bradyajohnston.github.io/palette-atlas
+```
+
 ## Gallery
 
 A few palettes from each collection, drawn from their source colours. Regenerate
