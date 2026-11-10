@@ -142,6 +142,15 @@ for generating the reuslting nodes.
    uv run palette-atlas verify [collection ...] --blender /path/to/blender
    ```
 
+5. **Package** the extension. It holds only `extension/blender_manifest.toml`,
+   which points Blender at the library hosted on GitHub Pages, so keep its
+   `version` in step with `pyproject.toml`.
+
+   ```sh
+   mkdir -p dist
+   blender -c extension build --source-dir extension --output-dir dist
+   ```
+
 ## Licence
 
 The node group assets in the library are marked `CC0-1.0`. The code that builds

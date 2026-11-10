@@ -1,0 +1,19 @@
+schema_version = "1.0.0"
+
+id = "palette_atlas"
+version = "0.2.0"
+name = "Palette Atlas"
+tagline = "Scientific and data visualisation colour palettes as nodes"
+maintainer = "Brady Johnston <brady.johnston@me.com>"
+type = "asset-library"
+
+website = "https://github.com/BradyAJohnston/palette-atlas"
+
+blender_version_min = "5.3.0"
+
+license = [
+  "SPDX:CC0-1.0",
+]
+
+[asset_library]
+remote_url = "https://bradyajohnston.github.io/palette-atlas/"
