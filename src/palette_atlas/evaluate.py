@@ -1,8 +1,4 @@
-"""Evaluate the built library's node groups in each editor. Run by `palette-atlas
-verify`, inside Blender 5.3:
-
-    blender -b --factory-startup --python-exit-code 1 \
-        -P src/palette_atlas/verify_blender.py -- cases.json out.npz
+"""Evaluate the built library's node groups in each editor, for verify.py.
 
 Each case gives a palette, its inputs, and columns: column c reads Value
 (c + offset) / scale, and Index c. Geometry Nodes stores the colour on points;
@@ -11,8 +7,7 @@ transform, with the colour going straight to the output, so nothing but the
 node group touches it. The results are display sRGB, 0 to 1.
 """
 
-import json
-import sys
+import tempfile
 from pathlib import Path
 
 import bpy
@@ -183,34 +178,29 @@ def eval_compositor(group, case, path):
     return pixels
 
 
-def main(cases_path: Path, out_path: Path) -> None:
-    cases = json.loads(cases_path.read_text())
-    png = out_path.with_suffix(".png")
+def evaluate(cases: list[dict]) -> dict[str, np.ndarray]:
+    """Display sRGB per case, keyed "<editor>/<case index>"."""
     results = {}
-    for editor in EDITORS:
-        bpy.ops.wm.read_homefile(use_factory_startup=True, use_empty=True, load_ui=False)
-        scene = bpy.context.scene
-        scene.render.use_compositing = editor == "compositor"
-        plane = setup_shader_scene(scene) if editor == "shader" else None
-        if editor == "compositor":
-            scene.render.engine = "CYCLES"
-        groups = {}
-        for i, case in enumerate(cases):
-            case = {**case, "editor": editor}
-            key = (case["collection"], case["name"])
-            if key not in groups:
-                groups[key] = load_group(editor, *key)
-            if editor == "geometry":
-                results[f"{editor}/{i}"] = eval_geometry(groups[key], case)
-            elif editor == "shader":
-                results[f"{editor}/{i}"] = eval_shader(groups[key], case, plane, png)
-            else:
-                results[f"{editor}/{i}"] = eval_compositor(groups[key], case, png)
-        print(f"evaluated {editor}: {len(cases)} cases", flush=True)
-    png.unlink(missing_ok=True)
-    np.savez_compressed(out_path, **results)
-
-
-if __name__ == "__main__":
-    args = sys.argv[sys.argv.index("--") + 1 :]
-    main(Path(args[0]), Path(args[1]))
+    with tempfile.TemporaryDirectory() as tmp:
+        png = Path(tmp) / "render.png"
+        for editor in EDITORS:
+            bpy.ops.wm.read_homefile(use_factory_startup=True, use_empty=True, load_ui=False)
+            scene = bpy.context.scene
+            scene.render.use_compositing = editor == "compositor"
+            plane = setup_shader_scene(scene) if editor == "shader" else None
+            if editor == "compositor":
+                scene.render.engine = "CYCLES"
+            groups = {}
+            for i, case in enumerate(cases):
+                case = {**case, "editor": editor}
+                key = (case["collection"], case["name"])
+                if key not in groups:
+                    groups[key] = load_group(editor, *key)
+                if editor == "geometry":
+                    results[f"{editor}/{i}"] = eval_geometry(groups[key], case)
+                elif editor == "shader":
+                    results[f"{editor}/{i}"] = eval_shader(groups[key], case, plane, png)
+                else:
+                    results[f"{editor}/{i}"] = eval_compositor(groups[key], case, png)
+            print(f"evaluated {editor}: {len(cases)} cases", flush=True)
+    return results

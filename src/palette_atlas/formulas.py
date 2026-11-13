@@ -3,8 +3,6 @@
 Each is written once against a few operations, so the same code gives numpy
 arrays (for checks and thumbnails) and math nodes (for the build). The channels
 are sRGB, clipped to 0..1 as matplotlib clips its lookup table.
-
-This module needs only numpy, so build.py can import it inside Blender.
 """
 
 import math

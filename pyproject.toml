@@ -1,6 +1,6 @@
 [project]
 name = "palette-atlas"
-version = "0.2.0"
+version = "0.2.1"
 description = "Add your description here"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -9,6 +9,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "bpy>=5.3.0",
     "cmcrameri>=1.10",
     "cmocean>=4.0.3",
     "matplotlib>=3.11.2",

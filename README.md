@@ -70,17 +70,16 @@ these with `uv run scripts/swatches.py`.
 
 ## Sources
 
-| Collection | Original source | Obtained via |
-| --- | --- | --- |
-| matplotlib | [matplotlib colormap reference](https://matplotlib.org/stable/users/explain/colors/colormaps.html) | [`matplotlib`](https://pypi.org/project/matplotlib/) |
-| cmocean | [cmocean](https://matplotlib.org/cmocean/) | [`cmocean`](https://pypi.org/project/cmocean/) |
-| Scientific colour maps | [Fabio Crameri](https://www.fabiocrameri.ch/colourmaps/) | [`cmcrameri`](https://pypi.org/project/cmcrameri/), plus `naviaW` from [Blender-Colormaps](https://github.com/TheJeran/Blender-Colormaps) |
-| MetBrewer | [MetBrewer](https://github.com/BlakeRMills/MetBrewer) | [`met-brewer`](https://pypi.org/project/met-brewer/) |
-| CarbonPlan | [carbonplan/colormaps](https://github.com/carbonplan/colormaps) | [`@carbonplan/colormaps`](https://www.npmjs.com/package/@carbonplan/colormaps) 4.0.0, exported by `scripts/carbonplan/` |
-| NASA | [Panoply colour tables](https://www.giss.nasa.gov/tools/panoply/colorbars/) | [Blender-Colormaps](https://github.com/TheJeran/Blender-Colormaps) |
-| LTC | [ltc-color-palettes](https://github.com/loukesio/ltc-color-palettes) | [Blender-Colormaps](https://github.com/TheJeran/Blender-Colormaps) |
-| Tableau | [colormaps](https://pratiman-91.github.io/colormaps/docs/collections/tableau), which Blender-Colormaps credits, not Tableau itself | [Blender-Colormaps](https://github.com/TheJeran/Blender-Colormaps) |
-
+| Collection             | Original source                                                                                                                    | Obtained via                                                                                                                              |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| matplotlib             | [matplotlib colormap reference](https://matplotlib.org/stable/users/explain/colors/colormaps.html)                                 | [`matplotlib`](https://pypi.org/project/matplotlib/)                                                                                      |
+| cmocean                | [cmocean](https://matplotlib.org/cmocean/)                                                                                         | [`cmocean`](https://pypi.org/project/cmocean/)                                                                                            |
+| Scientific colour maps | [Fabio Crameri](https://www.fabiocrameri.ch/colourmaps/)                                                                           | [`cmcrameri`](https://pypi.org/project/cmcrameri/), plus `naviaW` from [Blender-Colormaps](https://github.com/TheJeran/Blender-Colormaps) |
+| MetBrewer              | [MetBrewer](https://github.com/BlakeRMills/MetBrewer)                                                                              | [`met-brewer`](https://pypi.org/project/met-brewer/)                                                                                      |
+| CarbonPlan             | [carbonplan/colormaps](https://github.com/carbonplan/colormaps)                                                                    | [`@carbonplan/colormaps`](https://www.npmjs.com/package/@carbonplan/colormaps) 4.0.0, exported by `scripts/carbonplan/`                   |
+| NASA                   | [Panoply colour tables](https://www.giss.nasa.gov/tools/panoply/colorbars/)                                                        | [Blender-Colormaps](https://github.com/TheJeran/Blender-Colormaps)                                                                        |
+| LTC                    | [ltc-color-palettes](https://github.com/loukesio/ltc-color-palettes)                                                               | [Blender-Colormaps](https://github.com/TheJeran/Blender-Colormaps)                                                                        |
+| Tableau                | [colormaps](https://pratiman-91.github.io/colormaps/docs/collections/tableau), which Blender-Colormaps credits, not Tableau itself | [Blender-Colormaps](https://github.com/TheJeran/Blender-Colormaps)                                                                        |
 
 ## Palettes
 
@@ -105,12 +104,11 @@ rounded off.
 
 Vendored tables are described in `src/palette_atlas/data/rgb/README.md`.
 
-
 ## Building
 
 Some of the palettes can be expressed with a easy forula, and others are manually picked.
 For those that are manually picked and are gradients, we can do some curve fitting to reduce
-the number of points on a `Color Ramp` node that are required to express the palette (the 
+the number of points on a `Color Ramp` node that are required to express the palette (the
 node also is limited to 32 points). The results are cached and we use those points
 for generating the reuslting nodes.
 
@@ -121,34 +119,26 @@ for generating the reuslting nodes.
    uv run palette-atlas fit [collection ...]
    ```
 
-2. **Build** the `.blend` files, catalogs and thumbnails into `library/`. This runs
-   inside Blender and needs `nodebpy` available to Blender's Python.
+2. **Build** the `.blend` files, catalogs and thumbnails into `library/`, and
+   index it for serving as a remote asset library. This runs Blender through the
+   `bpy` package, so no separate Blender install is needed.
 
    ```sh
-   blender -b --factory-startup --python-exit-code 1 \
-       -P src/palette_atlas/build.py -- [collection ...]
+   uv run palette-atlas build [collection ...]
    ```
 
-3. **Index** the library.
+3. **Verify** the built groups in every editor against the source palettes.
 
    ```sh
-   blender -c asset_listing generate library
+   uv run palette-atlas verify [collection ...]
    ```
 
-4. **Verify** the built groups in every editor against the source palettes. This
-   runs Blender itself, from `--blender` or `$BLENDER`.
+4. **Package** the extension into `dist/`. It holds only
+   `extension/blender_manifest.toml`, which points Blender at the library hosted
+   on GitHub Pages, so keep its `version` in step with `pyproject.toml`.
 
    ```sh
-   uv run palette-atlas verify [collection ...] --blender /path/to/blender
-   ```
-
-5. **Package** the extension. It holds only `extension/blender_manifest.toml`,
-   which points Blender at the library hosted on GitHub Pages, so keep its
-   `version` in step with `pyproject.toml`.
-
-   ```sh
-   mkdir -p dist
-   blender -c extension build --source-dir extension --output-dir dist
+   uv run palette-atlas package
    ```
 
 ## Licence

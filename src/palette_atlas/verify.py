@@ -1,6 +1,6 @@
 """Check the built library against the source palettes, in every editor.
 
-Blender evaluates each node group (verify_blender.py) and this compares its
+bpy evaluates each node group (evaluate.py) and this compares its
 colours with the palette's own. Geometry Nodes evaluates a Color Ramp exactly,
 so it must match the fit. Shader and Compositor read a ramp from a 256 entry
 table, so a colour may come from up to 1/255 along the palette instead, and
@@ -11,21 +11,15 @@ between its samples, against matplotlib's lookup table made fine enough to hold
 every point checked.
 """
 
-import json
-import os
-import subprocess
-import tempfile
 from dataclasses import dataclass
-from pathlib import Path
-
 import matplotlib
 import numpy as np
 from matplotlib.colors import _create_lookup_table
 
+from .evaluate import evaluate
 from .fitting import Ramp, evaluate_ramp, read_ramps
 from .palettes import Palette, load_palettes
 
-SCRIPT = Path(__file__).with_name("verify_blender.py")
 EDITORS = ("geometry", "shader", "compositor")
 MODES = ("Stepped", "Smooth", "Index")
 # Value (c + 0.3) / 400 never lands on a band edge, and is k / 4000 for whole k
@@ -135,26 +129,12 @@ def cases_for(palette: Palette, ramp: Ramp) -> list[Case]:
     ]
 
 
-def run_blender(blender: str, cases: list[Case]) -> dict[str, np.ndarray]:
-    with tempfile.TemporaryDirectory() as tmp:
-        cases_path, out_path = Path(tmp) / "cases.json", Path(tmp) / "results.npz"
-        cases_path.write_text(json.dumps([c.to_json() for c in cases]))
-        subprocess.run(
-            [blender, "-b", "--factory-startup", "--python-exit-code", "1",
-             "-P", str(SCRIPT), "--", str(cases_path), str(out_path)],
-            check=True,
-        )
-        with np.load(out_path) as results:
-            return dict(results)
-
-
-def verify(collections: list[str] | None, blender: str | None) -> bool:
+def verify(collections: list[str] | None) -> bool:
     """Print how far each editor strays from the palettes, True when all pass."""
-    blender = blender or os.environ.get("BLENDER", "blender")
     palettes = load_palettes(collections)
     ramps = {c: read_ramps(c) for c in {p.collection for p in palettes}}
     cases = [c for p in palettes for c in cases_for(p, ramps[p.collection][p.name])]
-    results = run_blender(blender, cases)
+    results = evaluate([c.to_json() for c in cases])
 
     # worst error, overall and where a table step changes the colour by < 1/255
     worst: dict[tuple[str, str], list[float]] = {}

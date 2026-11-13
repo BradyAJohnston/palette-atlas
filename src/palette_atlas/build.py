@@ -1,7 +1,6 @@
-"""Build the asset library from the fitted ramps. Run inside Blender 5.3:
+"""Build the asset library from the fitted ramps, through the bpy module:
 
-    bblender -b --factory-startup --python-exit-code 1 \
-        -P src/palette_atlas/build.py -- [collection ...]
+    uv run palette-atlas build [collection ...]
 
 A node group's name must be unique within a .blend, and an asset is named after
 its node group. So that assets keep plain palette names, each editor and
@@ -10,27 +9,26 @@ collection gets its own file, library/<editor>/<collection>.blend.
 Ramps hold sRGB colours, blended in sRGB as the palettes' packages blend them,
 and each group converts its colour to linear at the end, as Blender expects.
 matplotlib's formula palettes are built from math nodes instead of ramps.
-
-This is a plain script, as Blender has neither matplotlib nor scipy to import
-the rest of the package with; formulas.py needs only numpy.
 """
 
+import html
 import json
 import math
-import sys
 import uuid
 from pathlib import Path
 
 import bpy
 import numpy as np
+from _bpy_internal.assets.remote_library import asset_listing_main
 from nodebpy import TreeBuilder, compositor, geometry, shader
 
-sys.path.insert(0, str(Path(__file__).parent))
-import formulas  # noqa: E402
+from . import formulas
 
 RAMPS_DIR = Path(__file__).parent / "data" / "ramps"
 LIBRARY_DIR = Path(__file__).parents[2] / "library"
 LIBRARY_NAME = "Palette Atlas"
+REPOSITORY = "https://github.com/BradyAJohnston/palette-atlas"
+REMOTE_URL = "https://bradyajohnston.github.io/palette-atlas/"  # as in the manifest
 CONTACT = {"name": "Brady Johnston", "email": "brady.johnston@me.com"}
 LICENSE = "CC0-1.0"  # SPDX identifier, set on every asset
 PREVIEW_SIZE = 128
@@ -269,7 +267,58 @@ def write_library_meta() -> None:
     path.write_text(json.dumps(meta, indent=2) + "\n")
 
 
-def main(collections: list[str]) -> None:
+def write_index_page(collections: list[str]) -> None:
+    """A landing page, as GitHub Pages lists no directories and 404s without it."""
+    rows = []
+    for collection in collections:
+        count = len(json.loads((RAMPS_DIR / f"{collection}.json").read_text()))
+        links = " · ".join(
+            f'<a href="{d}/{collection}.blend">{e.split()[0]}</a>'
+            for e, (d, _, _) in EDITORS.items()
+        )
+        rows.append(f"<tr><td>{html.escape(collection)}</td><td>{count}</td><td>{links}</td></tr>")
+    page = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{LIBRARY_NAME}</title>
+<style>
+  :root {{ color-scheme: light dark; font-family: system-ui, sans-serif; }}
+  body {{ max-width: 44rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }}
+  code {{ background: color-mix(in srgb, currentColor 10%, transparent); padding: 0.1em 0.3em; }}
+  table {{ border-collapse: collapse; width: 100%; }}
+  td, th {{ text-align: left; padding: 0.3rem 0.6rem 0.3rem 0; }}
+</style>
+</head>
+<body>
+<h1>{LIBRARY_NAME}</h1>
+<p>Scientific and data visualisation colour palettes as a remote asset library for
+Blender 5.3+. Add this page's URL as a remote asset library in Blender:</p>
+<p><code>{REMOTE_URL}</code></p>
+<p>Source, instructions and licences:
+<a href="{REPOSITORY}">{REPOSITORY}</a>. Assets are {LICENSE}.</p>
+<table>
+<tr><th>Collection</th><th>Palettes</th><th>Download</th></tr>
+{chr(10).join(rows)}
+</table>
+<p><a href="_v1/asset-index.json">asset index</a> ·
+<a href="blender_assets.cats.txt">catalogs</a></p>
+</body>
+</html>
+"""
+    (LIBRARY_DIR / "index.html").write_text(page)
+
+
+def index_library() -> None:
+    """Write the listing a remote asset library is served with."""
+    if asset_listing_main(["generate", str(LIBRARY_DIR)]):
+        raise SystemExit("asset_listing generate failed")
+    for backup in LIBRARY_DIR.rglob("*.blend1"):
+        backup.unlink()
+
+
+def build(collections: list[str] | None) -> None:
     every = sorted(p.stem for p in RAMPS_DIR.glob("*.json"))
     for collection in collections or every:
         ramps = json.loads((RAMPS_DIR / f"{collection}.json").read_text())
@@ -279,7 +328,5 @@ def main(collections: list[str]) -> None:
     LIBRARY_DIR.mkdir(exist_ok=True)
     write_catalogs(every)
     write_library_meta()
-
-
-if __name__ == "__main__":
-    main(sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else [])
+    write_index_page(every)
+    index_library()

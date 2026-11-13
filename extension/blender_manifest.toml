@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "palette_atlas"
-version = "0.2.0"
+version = "0.2.1"
 name = "Palette Atlas"
 tagline = "Scientific and data visualisation colour palettes as nodes"
 maintainer = "Brady Johnston <brady.johnston@me.com>"

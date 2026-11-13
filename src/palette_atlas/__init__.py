@@ -1,9 +1,12 @@
 import argparse
 import time
+from pathlib import Path
 
 from .fitting import fit_palettes
 from .palettes import LOADERS, load_palettes
-from .verify import verify as verify_library
+
+EXTENSION_DIR = Path(__file__).parents[2] / "extension"
+DIST_DIR = Path(__file__).parents[2] / "dist"
 
 
 def fit(collections: list[str] | None, workers: int | None) -> None:
@@ -30,6 +33,17 @@ def fit(collections: list[str] | None, workers: int | None) -> None:
             print(f"  {ramp.name}: {len(ramp.segments)} ramps, {ramp.error:.2f}/255")
 
 
+def package() -> None:
+    """Build the extension, which only points Blender at the hosted library."""
+    import bpy  # noqa: F401, sets up the path bl_pkg is imported from
+    from bl_pkg.bl_extension_cli import cli_extension_handler
+
+    DIST_DIR.mkdir(exist_ok=True)
+    args = ["build", "--source-dir", str(EXTENSION_DIR), "--output-dir", str(DIST_DIR)]
+    if cli_extension_handler(args):
+        raise SystemExit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="palette-atlas")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -38,17 +52,31 @@ def main() -> None:
         "collections", nargs="*", help=f"default: all of {', '.join(LOADERS)}"
     )
     fit_parser.add_argument("--workers", type=int, help="default: one per core")
+    build_parser = commands.add_parser(
+        "build", help="build and index the asset library into library/"
+    )
+    build_parser.add_argument(
+        "collections", nargs="*", help=f"default: all of {', '.join(LOADERS)}"
+    )
     verify_parser = commands.add_parser(
-        "verify", help="check the built library in every editor, through Blender"
+        "verify", help="check the built library in every editor against the palettes"
     )
     verify_parser.add_argument(
         "collections", nargs="*", help=f"default: all of {', '.join(LOADERS)}"
     )
-    verify_parser.add_argument(
-        "--blender", help="Blender 5.3 executable, default: $BLENDER or blender"
-    )
+    commands.add_parser("package", help="build the extension into dist/")
     args = parser.parse_args()
+    # bpy is imported only by the commands that need it
     if args.command == "fit":
         fit(args.collections, args.workers)
-    elif not verify_library(args.collections, args.blender):
-        raise SystemExit(1)
+    elif args.command == "build":
+        from .build import build
+
+        build(args.collections)
+    elif args.command == "verify":
+        from .verify import verify
+
+        if not verify(args.collections):
+            raise SystemExit(1)
+    else:
+        package()
