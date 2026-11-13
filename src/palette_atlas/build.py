@@ -249,14 +249,16 @@ def build_file(collection: str, ramps: list[dict], editor: str) -> None:
 
 
 def write_catalogs(collections: list[str]) -> None:
-    lines = ["VERSION 1"]
+    # parents are listed too, or Blender makes them itself and shows them unsaved
+    paths = [LIBRARY_NAME]
     for editor in EDITORS:
+        paths.append(f"{LIBRARY_NAME}/{editor}")
         for collection in collections:
             ramps = json.loads((RAMPS_DIR / f"{collection}.json").read_text())
             categories = {r.get("category", "") for r in ramps}  # "" is the collection
-            for category in sorted(categories | {""}):
-                path = catalog_path(editor, collection, category)
-                lines.append(f"{catalog_id(path)}:{path}:{path.replace('/', '-')}")
+            paths += [catalog_path(editor, collection, c) for c in sorted(categories | {""})]
+    lines = ["VERSION 1"]
+    lines += [f"{catalog_id(p)}:{p}:{p.replace('/', '-')}" for p in paths]
     (LIBRARY_DIR / "blender_assets.cats.txt").write_text("\n".join(lines) + "\n")
 
 
